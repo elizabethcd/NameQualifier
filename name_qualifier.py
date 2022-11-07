@@ -49,7 +49,7 @@ def main():
 	# Use manifest files to find mods in input folder
 	modList = []
 	jsonAssetsPacks = []
-	frameworks = ["spacechase0.JsonAssets", "Pathoschild.ContentPatcher", "Esca.FarmTypeManager", "DIGUS.CustomCrystalariumMod"]
+	frameworks = ["spacechase0.JsonAssets", "Pathoschild.ContentPatcher", "DIGUS.CustomCrystalariumMod", "DIGUS.CustomCaskMod", "aedenthorn.CustomOreNodes", "Esca.FarmTypeManager"]
 	frameworks = [x.casefold() for x in frameworks]
 	modDict = {key: [] for key in frameworks}
 	manifestList = folderPath.glob("**/manifest.json")
@@ -82,7 +82,6 @@ def main():
 				if file.name == "manifest.json":
 					continue
 				# Load in the data
-				print(str(file))
 				cpFileData = load_json(file.parent,file.name)
 
 				# If it's not a CP file, then copy it over
@@ -96,9 +95,13 @@ def main():
 				changesData = cpFileData["Changes"]
 				for patch in changesData:
 					if "Target" in patch and patch["Target"].casefold() == "Data/NPCDispositions".casefold() and "Entries" in patch:
-						print("Found NPC dispos patch!")
+						print("Found NPC dispositions patch! Renaming NPCs...")
 						for name in patch["Entries"].keys():
 							namesDict[name] = modName + name
+
+	# Print out what NPC renaming is going on
+	for name in namesDict:
+		print("Renaming " + name + " to " + namesDict[name])
 
 	# Run through CP files and strip out old NPC names and replace
 	for cpPack in modDict["Pathoschild.ContentPatcher".casefold()]:
@@ -108,7 +111,6 @@ def main():
 			if file.name == "manifest.json":
 				continue
 			# Load in the data
-			print(str(file))
 			cpFileData = load_json(file.parent,file.name)
 			# If it's not a CP file, don't process it
 			if "Changes" not in cpFileData:
@@ -232,8 +234,13 @@ def main():
 			# Save i18n file
 			save_json(i18n,get_output_loc(jaPack),"i18n/default.json")
 
-			print(str(jaPack) + " renamed!")
+			# Logging
+			print("Everything added by " + str(jaPack.name) + " renamed!")
 
+	# Build context tag dictionaries
+	objContextTagDict = {tagify(x):tagify(objectsDict[x]) for x in objectsDict}
+
+	# Go through JA packs and replace item names and NPC names as needed
 	for jaPack in modDict["spacechase0.JsonAssets".casefold()]:
 		# Replace big craftable recipe ingredients and friendship unlocks as needed
 		bigCraftablesPath = jaPack.joinpath("BigCraftables")
@@ -242,34 +249,13 @@ def main():
 			newFilePath = get_output_loc(file)
 			bcdata = load_json(newFilePath.parent,newFilePath.name)
 			# If there is a recipe for the big craftable
-			if "Recipe" in bcdata:
-				ingreds = bcdata["Recipe"]["Ingredients"]
-				newIngreds = []
-				for ing in ingreds:
-					# Case sensitivity my nemesis
-					if "Object" not in ing:
-						if "object" in ing:
-							ing["Object"] = ing["object"]
-							del ing["object"]
-						else:
-							print("Recipe ingredient missing an object!")
-							continue
-					# Replace object names
-					if ing["Object"] in objectsDict.keys():
-						ing["Object"] = objectsDict[ing["Object"]]
-					newIngreds.append(ing)
-				bcdata["Recipe"]["Ingredients"] = newIngreds
+			if "Recipe" in bcdata and bcdata["Recipe"] is not None:
+				if "Ingredients" in bcdata["Recipe"] and bcdata["Recipe"]["Ingredients"] is not None:
+					bcdata["Recipe"]["Ingredients"] = replace_ingreds(bcdata["Recipe"]["Ingredients"], objectsDict)
 				# Friendship unlocks
 				if "PurchaseRequirements" in bcdata["Recipe"]:
-					reqList = bcdata["Recipe"]["PurchaseRequirements"]
-					newReqList = []
-					for req in reqList:
-						for name in namesDict:
-							if "f " + name in req:
-								req.replace("f " + name, "f " + namesDict[name])
-						newReqList.append(req)
-					bcdata["Recipe"]["PurchaseRequirements"] = newReqList
-				save_json(bcdata, newFilePath.parent, newFilePath.name)
+					bcdata["Recipe"]["PurchaseRequirements"] = replace_friend_names(bcdata["Recipe"]["PurchaseRequirements"], namesDict)
+			save_json(bcdata, newFilePath.parent, newFilePath.name)
 
 		# Replace crop products and friendship unlocks as needed
 		cropsPath = jaPack.joinpath("Crops")
@@ -281,16 +267,9 @@ def main():
 			if cropdata["Product"] in objectsDict.keys():
 				cropdata["Product"] = objectsDict[cropdata["Product"]]
 			# Friendship unlocks
-			if "SeedPurchaseRequirements" in cropdata:
-					reqList = cropdata["SeedPurchaseRequirements"]
-					newReqList = []
-					if reqList is not None:
-						for req in reqList:
-							for name in namesDict:
-								if "f " + name in req:
-									req = req.replace("f " + name, "f " + namesDict[name])
-							newReqList.append(req)
-						cropdata["SeedPurchaseRequirements"] = newReqList
+			if "SeedPurchaseRequirements" in cropdata and cropdata["SeedPurchaseRequirements"] is not None:
+				# Regex match any friendship requirements to the names in the names dict
+				cropdata["SeedPurchaseRequirements"] = replace_friend_names(cropdata["SeedPurchaseRequirements"], namesDict)
 			save_json(cropdata, newFilePath.parent, newFilePath.name)
 
 		# Replace fruit tree products and friendship unlocks as needed
@@ -303,38 +282,254 @@ def main():
 			if treedata["Product"] in objectsDict.keys():
 				treedata["Product"] = objectsDict[treedata["Product"]]
 			# Friendship unlocks
-			if "SaplingPurchaseRequirements" in treedata:
-					reqList = treedata["SaplingPurchaseRequirements"]
-					newReqList = []
-					if reqList is not None:
-						for req in reqList:
-							for name in namesDict:
-								if "f " + name in req:
-									req = req.replace("f " + name, "f " + namesDict[name])
-							newReqList.append(req)
-						treedata["SaplingPurchaseRequirements"] = newReqList
+			if "SaplingPurchaseRequirements" in treedata and treedata["SaplingPurchaseRequirements"] is not None:
+				# Regex match any friendship requirements to the names in the names dict
+				treedata["SaplingPurchaseRequirements"] = replace_friend_names(treedata["SaplingPurchaseRequirements"], namesDict)
 			save_json(treedata, newFilePath.parent, newFilePath.name)
 
-	# Go through JA mods and replace all renamed item names and NPC names
-	# Objects: recipe ingredients
-	# Tailoring recipe: crafted item
-	# Fences: recipe ingredients
-	# Forge recipes: BaseItemName and ResultItemName
-	# NPC names:
-	# Friendship purchase requirements
-	# Gift tastes
+		# Replace object recipe ingredients and friendship unlocks as needed
+		objectsPath = jaPack.joinpath("Objects")
+		objectsList = objectsPath.glob("**/*.json")
+		for file in objectsList:
+			newFilePath = get_output_loc(file)
+			objectdata = load_json(newFilePath.parent,newFilePath.name)
+			# If there is a recipe for the object
+			if "Recipe" in objectdata and objectdata["Recipe"] is not None:
+				if "Ingredients" in objectdata["Recipe"] and objectdata["Recipe"]["Ingredients"] is not None:
+					objectdata["Recipe"]["Ingredients"] = replace_ingreds(objectdata["Recipe"]["Ingredients"], objectsDict)
+				# Friendship unlocks
+				if "PurchaseRequirements" in objectdata["Recipe"] and objectdata["Recipe"]["PurchaseRequirements"] is not None:
+					# Regex match any friendship requirements to the names in the names dict
+					objectdata["Recipe"]["PurchaseRequirements"] = replace_friend_names(objectdata["Recipe"]["PurchaseRequirements"], namesDict)
+			# If there are gift tastes from NPCs with new names, replace names
+			if "GiftTastes" in objectdata:
+				for value in objectdata["GiftTastes"]:
+					objectdata["GiftTastes"][value] = [namesDict[person] if person in namesDict else person for person in objectdata["GiftTastes"][value]]
+			save_json(objectdata, newFilePath.parent, newFilePath.name)
+
+		# Replace tailoring recipe products (shirts and pants)
+		tailoringPath = jaPack.joinpath("Tailoring")
+		tailorList = tailoringPath.glob("**/*.json")
+		for file in tailorList:
+			newFilePath = get_output_loc(file)
+			tailordata = load_json(newFilePath.parent,newFilePath.name)
+			# Replace crafted items if they're JA shirts or pants
+			if "CraftedItems" in tailordata and tailordata["CraftedItems"] is not None:
+				tailordata["CraftedItems"] = [shirtsDict[item] if item in shirtsDict else item for item in tailordata["CraftedItems"]]
+				tailordata["CraftedItems"] = [pantsDict[item] if item in pantsDict else item for item in tailordata["CraftedItems"]]
+			# Replace first item context tags if they're in the objects context tag dict
+			if "FirstItemTags" in tailordata and tailordata["FirstItemTags"] is not None:
+				tailordata["FirstItemTags"] = [objContextTagDict[tag] if tag in objContextTagDict else tag for tag in tailordata["FirstItemTags"]]
+			# Replace second item context tags if they're in the objects context tag dict
+			if "SecondItemTags" in tailordata and tailordata["SecondItemTags"] is not None:
+				tailordata["SecondItemTags"] = [objContextTagDict[tag] if tag in objContextTagDict else tag for tag in tailordata["SecondItemTags"]]
+			save_json(tailordata, newFilePath.parent, newFilePath.name)
+
+
+		# Replace fence repair material, recipe ingredients, and friendship unlocks
+		fencePath = jaPack.joinpath("Fences")
+		fenceList = fencePath.glob("**/*.json")
+		for file in fenceList:
+			newFilePath = get_output_loc(file)
+			fencedata = load_json(newFilePath.parent,newFilePath.name)
+			if "RepairMaterial" in fencedata and fencedata["RepairMaterial"] is not None and fencedata["RepairMaterial"] in objectsDict:
+				fenceData["RepairMaterial"] = objectsDict[fenceData["RepairMaterial"]]
+			if "Recipe" in fencedata and fencedata["Recipe"] is not None:
+				# Recipe ingredients
+				if "Ingredients" in fencedata["Recipe"] and fencedata["Recipe"]["Ingredients"] is not None:
+					fencedata["Recipe"]["Ingredients"] = replace_ingreds(fencedata["Recipe"]["Ingredients"], objectsDict)
+				# Friendship unlocks
+				if "PurchaseRequirements" in fencedata["Recipe"] and fencedata["Recipe"]["PurchaseRequirements"] is not None:
+					# Regex match any friendship requirements to the names in the names dict
+					fencedata["Recipe"]["PurchaseRequirements"] = replace_friend_names(fencedata["Recipe"]["PurchaseRequirements"], namesDict)
+			save_json(fencedata, newFilePath.parent, newFilePath.name)
+
+		# Replace forge recipe inputs and outputs
+		forgePath = jaPack.joinpath("Forge")
+		forgeList = forgePath.glob("**/*.json")
+		for file in forgeList:
+			newFilePath = get_output_loc(file)
+			forgedata = load_json(file.parent,file.name)
+			# Check big craftables
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in bigcraftDict:
+				forgedata["BaseItemName"] = bigcraftDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in bigcraftDict:
+				forgedata["ResultItemName"] = bigcraftDict[forgedata["ResultItemName"]]
+			# Check fences
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in fencesDict:
+				forgedata["BaseItemName"] = fencesDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in fencesDict:
+				forgedata["ResultItemName"] = fencesDict[forgedata["ResultItemName"]]
+			# Check seeds
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in seedDict:
+				forgedata["BaseItemName"] = seedDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in seedDict:
+				forgedata["ResultItemName"] = seedDict[forgedata["ResultItemName"]]
+			# Check saplings
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in saplingDict:
+				forgedata["BaseItemName"] = saplingDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in saplingDict:
+				forgedata["ResultItemName"] = saplingDict[forgedata["ResultItemName"]]
+			# Check shirts
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in shirtsDict:
+				forgedata["BaseItemName"] = shirtsDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in shirtsDict:
+				forgedata["ResultItemName"] = shirtsDict[forgedata["ResultItemName"]]
+			# Check pants
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in pantsDict:
+				forgedata["BaseItemName"] = pantsDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in pantsDict:
+				forgedata["ResultItemName"] = pantsDict[forgedata["ResultItemName"]]
+			# Check boots
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in bootsDict:
+				forgedata["BaseItemName"] = bootsDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in bootsDict:
+				forgedata["ResultItemName"] = bootsDict[forgedata["ResultItemName"]]
+			# Check hats
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in hatsDict:
+				forgedata["BaseItemName"] = hatsDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in hatsDict:
+				forgedata["ResultItemName"] = hatsDict[forgedata["ResultItemName"]]
+			# Check objects
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in objectsDict:
+				forgedata["BaseItemName"] = objectsDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in objectsDict:
+				forgedata["ResultItemName"] = objectsDict[forgedata["ResultItemName"]]
+			# Check weapons
+			if "BaseItemName" in forgedata and forgedata["BaseItemName"] is not None and forgedata["BaseItemName"] in weaponsDict:
+				forgedata["BaseItemName"] = weaponsDict[forgedata["BaseItemName"]]
+			if "ResultItemName" in forgedata and forgedata["ResultItemName"] is not None and forgedata["ResultItemName"] in weaponsDict:
+				forgedata["ResultItemName"] = weaponsDict[forgedata["ResultItemName"]]
+			# Check context tags for items, replace if needed
+			if "IngredientContextTag" in forgedata and forgedata["IngredientContextTag"] is not None and forgedata["IngredientContextTag"] in objContextTagDict:
+				forgedata["IngredientContextTag"] = objContextTagDict[forgedata["IngredientContextTag"]]
+			newFilePath.parent.mkdir(parents=True, exist_ok=True)
+			save_json(forgedata, newFilePath.parent, newFilePath.name)
+
+		# Logging
+		print("All items and NPCs referenced in " + str(jaPack.name) + " renamed!")
 
 	# Custom Crystalarium Mod
 	# Object names for duplication
+	for cryPack in modDict["DIGUS.CustomCrystalariumMod".casefold()]:
+		allCrystJsons = cryPack.glob("**/*.json")
+		for file in allCrystJsons:
+			# Don't process the manifest (already handled)
+			if file.name == "manifest.json":
+				continue
+
+			crystalData = load_json(file.parent,file.name)
+			# Process through each entry in the json list
+			for entry in crystalData:
+				# Replace the name object names
+				if "Name" in entry and entry["Name"] is not None and entry["Name"] in objectsDict:
+					entry["Name"] = objectsDict[entry["Name"]]
+				# Replace the cloning data object names
+				if "CloningData" in entry and entry["CloningData"] is not None:
+					clData = entry["CloningData"]
+					newData = dict()
+					for dat in clData:
+						if dat in objectsDict:
+							newData[objectsDict[dat]] = clData[dat]
+						else:
+							newData[dat] = clData[dat]
+					entry["CloningData"] = newData
+
+			# Save for later
+			newFilePath = get_output_loc(file)
+			newFilePath.parent.mkdir(parents=True, exist_ok=True)
+			save_json(crystalData, newFilePath.parent, newFilePath.name)
+		# Logging
+		print("All objects referenced in " + str(cryPack.name) + " renamed!")
 
 	# Custom Casks Mod
 	# Object names for use in casks
+	for caskPack in modDict["DIGUS.CustomCaskMod".casefold()]:
+		allCaskJsons = caskPack.glob("**/*.json")
+		for file in allCaskJsons:
+			# Don't process the manifest (already handled)
+			if file.name == "manifest.json":
+				continue
+
+			caskData = load_json(file.parent,file.name)
+			caskData = {objectsDict[x] if x in objectsDict else x: caskData[x] for x in caskData}
+
+			# Save for later
+			newFilePath = get_output_loc(file)
+			newFilePath.parent.mkdir(parents=True, exist_ok=True)
+			save_json(caskData, newFilePath.parent, newFilePath.name)
+		# Logging
+		print("All objects referenced in " + str(caskPack.name) + " renamed!")
+
 
 	# Custom Ore Nodes
 	# Object names in ore node produce
+	for orePack in modDict["aedenthorn.CustomOreNodes".casefold()]:
+		oreJsons = orePack.glob("**/*.json")
+		for file in oreJsons:
+			# Don't process the manifest (already handled)
+			if file.name == "manifest.json":
+				continue
+
+			oreData = load_json(file.parent,file.name)
+			# If it's a CON content pack, replace the item names as appropriate
+			if "nodes" in oreData and oreData["nodes"] is not None:
+				nodeList = oreData["nodes"]
+				for oreNode in nodeList:
+					if "dropItems" in oreNode and oreNode["dropItems"] is not None:
+						dropsList = oreNode["dropItems"]
+						for dropItem in dropsList:
+							if "itemIdOrName" in dropItem and dropItem["itemIdOrName"] is not None and dropItem["itemIdOrName"] in objectsDict:
+								dropItem["itemIdOrName"] = objectsDict[dropItem["itemIdOrName"]]
+						oreNode["dropItems"] = dropsList
+				oreData["nodes"] = nodeList
+
+			# Save for later
+			newFilePath = get_output_loc(file)
+			newFilePath.parent.mkdir(parents=True, exist_ok=True)
+			save_json(oreData, newFilePath.parent, newFilePath.name)
+		# Logging
+		print("All objects referenced in " + str(orePack.name) + " renamed!")
 
 	# Farm Type Manager
-	# Object names for spawning
+	# Object names for spawning in
+	for ftmPack in modDict["Esca.FarmTypeManager".casefold()]:
+		ftmJsons = ftmPack.glob("**/*.json")
+		for file in ftmJsons:
+			# Don't process the manifest (already handled)
+			if file.name == "manifest.json":
+				continue
+
+			ftmData = load_json(file.parent,file.name)
+			if "Forage_Spawn_Settings" in ftmData and ftmData["Forage_Spawn_Settings"] is not None:
+				if "Areas" in ftmData["Forage_Spawn_Settings"] and ftmData["Forage_Spawn_Settings"]["Areas"] is not None:
+					# Check every season for every entry
+					for area in ftmData["Forage_Spawn_Settings"]["Areas"]:
+						if "SpringItemIndex" in area and area["SpringItemIndex"] is not None:
+							area["SpringItemIndex"] = handle_ftm_area(area["SpringItemIndex"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+						if "SummerItemIndex" in area and area["SummerItemIndex"] is not None:
+							area["SummerItemIndex"] = handle_ftm_area(area["SummerItemIndex"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+						if "FallItemIndex" in area and area["FallItemIndex"] is not None:
+							area["FallItemIndex"] = handle_ftm_area(area["FallItemIndex"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+						if "WinterItemIndex" in area and area["WinterItemIndex"] is not None:
+							area["WinterItemIndex"] = handle_ftm_area(area["WinterItemIndex"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+
+				# Check every season non-area-specific
+				if "SpringItemIndex" in ftmData["Forage_Spawn_Settings"] and ftmData["Forage_Spawn_Settings"]["SpringItemIndex"] is not None:
+					ftmData["Forage_Spawn_Settings"]["SpringItemIndex"] = handle_ftm_area(ftmData["Forage_Spawn_Settings"]["SpringItemIndex"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+				if "SummerItemIndex" in ftmData["Forage_Spawn_Settings"] and ftmData["Forage_Spawn_Settings"]["SummerItemIndex"] is not None:
+					ftmData["Forage_Spawn_Settings"]["SummerItemIndex"] = handle_ftm_area(ftmData["Forage_Spawn_Settings"]["SummerItemIndex"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+				if "FallItemIndex" in ftmData["Forage_Spawn_Settings"] and ftmData["Forage_Spawn_Settings"]["FallItemIndex"] is not None:
+					ftmData["Forage_Spawn_Settings"]["FallItemIndex"] = handle_ftm_area(ftmData["Forage_Spawn_Settings"]["FallItemIndex"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+				if "WinterItemIndex" in ftmData["Forage_Spawn_Settings"] and ftmData["Forage_Spawn_Settings"]["WinterItemIndex"] is not None:
+					ftmData["Forage_Spawn_Settings"]["WinterItemIndex"] = handle_ftm_area(ftmData["Forage_Spawn_Settings"]["WinterItemIndex"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+			
+			# Save for later
+			newFilePath = get_output_loc(file)
+			newFilePath.parent.mkdir(parents=True, exist_ok=True)
+			save_json(ftmData, newFilePath.parent, newFilePath.name)
+		# Logging
+		print("All objects referenced in " + str(ftmPack.name) + " renamed!")
 
 	# Mail Framework Mod
 	# Names of items attached to mail
@@ -410,19 +605,152 @@ def do_renaming(filePath, uniqueString, i18n, storingDict, prepender, extras, ex
 		if extras == "Sapling":
 			storingDict[itemdata["SaplingName"]] = newSaplingName
 			itemdata["SaplingName"] = newSaplingName
-		print(newName + " processed")
+		# print(newName + " processed") # Logging
 		# Save json once processed
 		newFilePath = get_output_loc(file)
 		newFilePath.parent.mkdir(parents=True, exist_ok=True)
 		save_json(itemdata, newFilePath.parent, newFilePath.name)
 
+def replace_friend_names(reqList, namesDict):
+	def friend_repl(match):
+		# If there's a matching name in namesDict, replace it
+		if match.group('name') in namesDict:
+			return "f " + namesDict[match.group('name')] + " "
+		# Otherwise return the whole thing
+		else:
+			return match.group(0)
+	# Do a regex search for friend requirements, replace names if needed
+	return [re.sub(r"f (?P<name>[a-zA-Z]+) ", friend_repl, req)  for req in reqList]
+
+def replace_ingreds(ingreds, objectsDict):
+	newIngreds = []
+	for ing in ingreds:
+		# Case sensitivity my nemesis
+		if "Object" not in ing:
+			if "object" in ing:
+				ing["Object"] = ing["object"]
+				del ing["object"]
+			else:
+				print("Recipe ingredient missing an object!")
+				continue
+		# Replace object names
+		if ing["Object"] in objectsDict:
+			ing["Object"] = objectsDict[ing["Object"]]
+		newIngreds.append(ing)
+	return newIngreds
+
+def handle_ftm_area(areaList, objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict):
+	for item in areaList:
+		# Handle raw integer ID format
+		if type(item) is int:
+			continue
+		# Handle raw string name format
+		elif type(item) is str:
+			if item in objectsDict:
+				item = objectsDict[item]
+				continue
+		# Handle more complex category-based format
+		elif type(item) is dict:
+			if "category" in item and item["category"] is not None:
+				if item["category"].casefold() == "object":
+					# Deal with objects
+					if "name" in item:
+						item["name"] = objectsDict[item["name"]] if item["name"] in objectsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = objectsDict[item["Name"]] if item["Name"] in objectsDict else item["Name"]
+				elif item["category"].casefold() == "big craftable":
+					# Deal with big craftables
+					if "name" in item:
+						item["name"] = bigcraftDict[item["name"]] if item["name"] in bigcraftDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = bigcraftDict[item["Name"]] if item["Name"] in bigcraftDict else item["Name"]
+				elif item["category"].casefold() == "boots":
+					# Deal with boots
+					if "name" in item:
+						item["name"] = bootsDict[item["name"]] if item["name"] in bootsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = bootsDict[item["Name"]] if item["Name"] in bootsDict else item["Name"]
+				elif item["category"].casefold() == "clothing":
+					# Deal with clothing
+					if "name" in item:
+						item["name"] = pantsDict[item["name"]] if item["name"] in pantsDict else item["name"]
+						item["name"] = shirtsDict[item["name"]] if item["name"] in shirtsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = pantsDict[item["Name"]] if item["Name"] in pantsDict else item["Name"]
+						item["Name"] = shirtsDict[item["Name"]] if item["Name"] in shirtsDict else item["Name"]
+				elif item["category"].casefold() == "hat":
+					# Deal with hats
+					if "name" in item:
+						item["name"] = hatsDict[item["name"]] if item["name"] in hatsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = hatsDict[item["Name"]] if item["Name"] in hatsDict else item["Name"]
+				elif item["category"].casefold() == "weapon":
+					# Deal with weapons
+					if "name" in item:
+						item["name"] = weaponsDict[item["name"]] if item["name"] in weaponsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = weaponsDict[item["Name"]] if item["Name"] in weaponsDict else item["Name"]
+			elif "Category" in item and item["Category"] is not None:
+				if item["Category"].casefold() == "object":
+					# Deal with objects
+					if "name" in item:
+						item["name"] = objectsDict[item["name"]] if item["name"] in objectsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = objectsDict[item["Name"]] if item["Name"] in objectsDict else item["Name"]
+				elif item["Category"].casefold() == "big craftable":
+					# Deal with big craftables
+					if "name" in item:
+						item["name"] = bigcraftDict[item["name"]] if item["name"] in bigcraftDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = bigcraftDict[item["Name"]] if item["Name"] in bigcraftDict else item["Name"]
+				elif item["Category"].casefold() == "boots":
+					# Deal with boots
+					if "name" in item:
+						item["name"] = bootsDict[item["name"]] if item["name"] in bootsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = bootsDict[item["Name"]] if item["Name"] in bootsDict else item["Name"]
+				elif item["Category"].casefold() == "clothing":
+					# Deal with clothing
+					if "name" in item:
+						item["name"] = pantsDict[item["name"]] if item["name"] in pantsDict else item["name"]
+						item["name"] = shirtsDict[item["name"]] if item["name"] in shirtsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = pantsDict[item["Name"]] if item["Name"] in pantsDict else item["Name"]
+						item["Name"] = shirtsDict[item["Name"]] if item["Name"] in shirtsDict else item["Name"]
+				elif item["Category"].casefold() == "hat":
+					# Deal with hats
+					if "name" in item:
+						item["name"] = hatsDict[item["name"]] if item["name"] in hatsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = hatsDict[item["Name"]] if item["Name"] in hatsDict else item["Name"]
+				elif item["Category"].casefold() == "weapon":
+					# Deal with weapons
+					if "name" in item:
+						item["name"] = weaponsDict[item["name"]] if item["name"] in weaponsDict else item["name"]
+					elif "Name" in item:
+						item["Name"] = weaponsDict[item["Name"]] if item["Name"] in weaponsDict else item["Name"]
+			else:
+				print("Malformed spawning area in FTM, no category set!")
+
+			if "Contents" in item:
+				# Handle contents list
+				area["Contents"] = handle_ftm_area(area["Contents"], objectsDict, bigcraftDict, bootsDict, pantsDict, shirtsDict, hatsDict, weaponsDict)
+	return areaList
+
+def tagify(itemname):
+	# Trim whitespace (same as game)
+	itemname = itemname.strip()
+	# Make lowercase (same as game)
+	itemname = itemname.lower()
+	# Remove spaces (same as game)
+	itemname = re.sub(r" ", "_", itemname)
+	# Remove apostrophes (same as game)
+	itemname = re.sub(r"\'", "", itemname)
+	return "item_" + itemname
+
 def load_json(filepath, filename):
 	# Read the json in as text
 	file_contents = filepath.joinpath(filename).read_text()
-
-	# Some third-party JSON files begin with extraneous characters - try to fix them up.
-	unused_chars, opening_bracket, rest_of_file = file_contents.partition("{")
-	file_contents = opening_bracket + rest_of_file  # Discard the extra characters.
 
 	# Some JSON files have curly quotes in them, replace them with normal quotes
 	file_contents = file_contents.replace(u'\u201c', '"').replace(u'\u201d', '"')
@@ -449,8 +777,8 @@ def save_json(data, pathname, filename):
 	# Make the folder if needed, pulling in relative filepath from filename if needed
 	pathname.joinpath(Path(filename).parent).mkdir(exist_ok=True)
 	# Save the file
-	with pathname.joinpath(filename).open("w") as write_file:
-		json.dump(data, write_file, indent=4)
+	with pathname.joinpath(filename).open("w", encoding="utf-8") as write_file:
+		json.dump(data, write_file, indent=4, ensure_ascii=False)
 
 def check_manifest(manifest):
 	if "Author" not in manifest:
